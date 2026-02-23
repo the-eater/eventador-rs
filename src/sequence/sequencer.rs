@@ -2,6 +2,8 @@ use crate::sequence::sequence_group::SequenceGroup;
 use crate::sequence::Sequence;
 use crate::WaitStrategy;
 use std::sync::Arc;
+#[cfg(feature = "async")]
+use tokio::time::sleep;
 
 pub struct Sequencer {
     cursor: Sequence,
@@ -110,7 +112,7 @@ impl Sequencer {
                 match self.wait_strategy {
                     WaitStrategy::AllSubscribers => {
                         if wrap_point > gating_sequence as i64 {
-                            async_std::task::sleep(std::time::Duration::from_micros(100)).await;
+                            sleep(std::time::Duration::from_micros(100)).await;
                             continue;
                         }
                     }
@@ -123,7 +125,7 @@ impl Sequencer {
 
                     WaitStrategy::WaitForDuration(wait) => {
                         if self.cursor.compare_exchange(current, next as u64) {
-                            async_std::task::sleep(wait).await;
+                            sleep(wait).await;
 
                             return Ok(next as u64);
                         }

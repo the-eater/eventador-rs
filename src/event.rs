@@ -1,5 +1,5 @@
 use crate::alertable::Alertable;
-use crossbeam::epoch::{pin, Atomic, Guard, Owned};
+use crossbeam::epoch::{Atomic, Guard, Owned, pin};
 use lockfree::queue::Queue;
 use std::any::{Any, TypeId};
 use std::ops::Deref;
@@ -87,17 +87,18 @@ impl EventEnvelope {
 
         let event = self.event.load(Ordering::Acquire, &guard).as_raw();
 
-        if !event.is_null() && TypeId::of::<T>() == (*event).type_id {
-            if let Some(event_data) = (*event).data.downcast_ref() {
-                return Some(EventRead {
-                    _guard: guard,
-                    raw: &*event_data,
-                    _marker: std::marker::PhantomData,
-                });
-            }
+        if !event.is_null()
+            && TypeId::of::<T>() == (*event).type_id
+            && let Some(event_data) = (*event).data.downcast_ref()
+        {
+            return Some(EventRead {
+                _guard: guard,
+                raw: &*event_data,
+                _marker: std::marker::PhantomData,
+            });
         }
 
-        return None;
+        None
     }
 
     pub(crate) fn overwrite<T: 'static + Send + Sync>(&self, sequence: u64, data: T) {
@@ -113,10 +114,13 @@ impl EventEnvelope {
 
             let current_event = self.event.load(Ordering::Acquire, &guard);
 
-            match self
-                .event
-                .compare_and_set(current_event, event, Ordering::AcqRel, &guard)
-            {
+            match self.event.compare_exchange(
+                current_event,
+                event,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                &guard,
+            ) {
                 Ok(_) => {
                     self.sequence.store(sequence, Ordering::Release);
 

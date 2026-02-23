@@ -350,18 +350,14 @@ impl From<Arc<RingBuffer>> for Eventador {
 mod tests {
     #[cfg(feature = "async")]
     use crate::futures::publisher::{AsyncPublisher, PublishError};
+    #[cfg(feature = "async")]
+    use std::time::Duration;
 
     #[cfg(feature = "async")]
     use futures::{
-        future::{AbortHandle, Abortable},
         SinkExt, StreamExt,
+        future::{AbortHandle, Abortable},
     };
-
-    #[cfg(feature = "async")]
-    use async_channel::unbounded;
-
-    #[cfg(feature = "async")]
-    use ntest::timeout;
 
     use crate::Eventador;
 
@@ -393,58 +389,62 @@ mod tests {
         assert_eq!(i, *msg);
     }
 
-    #[async_std::test]
-    #[timeout(5000)]
     #[cfg(feature = "async")]
+    #[tokio::test]
     async fn async_publish() {
-        println!("Starting test!");
-        let res = Eventador::new(4);
-        assert!(res.is_ok());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            println!("Starting test!");
+            let res = Eventador::new(4);
+            assert!(res.is_ok());
 
-        let eventbus: Eventador = res.unwrap();
+            let eventbus: Eventador = res.unwrap();
 
-        let mut subscriber = eventbus.async_subscriber::<usize>();
-        let mut publisher: AsyncPublisher<usize> = eventbus.async_publisher(4);
+            let mut subscriber = eventbus.async_subscriber::<usize>();
+            let mut publisher: AsyncPublisher<usize> = eventbus.async_publisher(4);
 
-        let (sender, mut receiver) = unbounded::<Result<usize, PublishError>>();
+            let (mut sender, mut receiver) =
+                futures::channel::mpsc::unbounded::<Result<usize, PublishError>>();
 
-        let mut i: usize = 1234;
-        let mut sent = sender.send(Ok(i)).await;
-        assert!(sent.is_ok());
+            let mut i: usize = 1234;
+            let mut sent = sender.send(Ok(i)).await;
+            assert!(sent.is_ok());
 
-        let (handle, reg) = AbortHandle::new_pair();
-        async_std::task::spawn(Abortable::new(
-            async move {
-                publisher.send_all(&mut receiver).await.unwrap();
-            },
-            reg,
-        ));
+            let (handle, reg) = AbortHandle::new_pair();
+            tokio::task::spawn(Abortable::new(
+                async move {
+                    publisher.send_all(&mut receiver).await.unwrap();
+                },
+                reg,
+            ));
 
-        let mut msg = subscriber.next().await.unwrap();
-        assert_eq!(i, *msg);
-        println!("Passed part 1!");
+            let mut msg = subscriber.next().await.unwrap();
+            assert_eq!(i, *msg);
+            println!("Passed part 1!");
 
-        i += 1111;
-        let eventbus2 = eventbus.clone();
+            i += 1111;
+            let eventbus2 = eventbus.clone();
 
-        async_std::task::spawn(async move {
-            async_std::task::sleep(std::time::Duration::from_secs(1)).await;
-            eventbus2.publish(i);
-        });
+            tokio::task::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                eventbus2.publish(i);
+            });
 
-        msg = subscriber.next().await.unwrap();
-        assert_eq!(i, *msg);
-        println!("Passed part 2!");
+            msg = subscriber.next().await.unwrap();
+            assert_eq!(i, *msg);
+            println!("Passed part 2!");
 
-        i += 1111;
-        sent = sender.send(Ok(i)).await;
-        assert!(sent.is_ok());
+            i += 1111;
+            sent = sender.send(Ok(i)).await;
+            assert!(sent.is_ok());
 
-        msg = subscriber.next().await.unwrap();
-        assert_eq!(i, *msg);
-        println!("Passed part 3! Done.");
+            msg = subscriber.next().await.unwrap();
+            assert_eq!(i, *msg);
+            println!("Passed part 3! Done.");
 
-        handle.abort();
+            handle.abort();
+        })
+        .await
+        .unwrap();
     }
 
     #[derive(Debug, Eq, PartialEq)]
